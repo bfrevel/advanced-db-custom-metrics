@@ -1,6 +1,7 @@
 = Advanced DB Custom Metrics
 :description: Extension for AppDynamics to collect Custom Database Metrics 
 :url-repo: https://github.com/bfrevel/advanced-db-custom-metrics
+:toc:
 
 == Purpose
 
@@ -172,6 +173,7 @@ EOT
 
 
 
+== Execute the extension
 
 .Run
 [source, sh]
