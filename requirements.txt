@@ -1,0 +1,4 @@
+oracledb==2.0.1
+requests==2.31.0
+schedule==1.2.1
+black==24.2.0

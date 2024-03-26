@@ -1,0 +1,180 @@
+= Advanced DB Custom Metrics
+:description: Extension for AppDynamics to collect Custom Database Metrics 
+:url-repo: https://github.com/bfrevel/advanced-db-custom-metrics
+
+== Purpose
+
+Standart AppDynamics DB Custom Metrics have some typical metric limitations like:
+
+* It's not possible to collect metrics from the past
+* It's not possible to use analytics features for custom metrics.
+* It's not possible to compare timeframes.
+* High maintenance effort required when collecting metrics for different shops and products
+
+This extension reads the data from the database every minute and sends the information to AppDynamics Analytics Event API. 
+
+
+
+== Setup
+
+
+=== Create Event Schema in AppDynamics
+
+doc: https://docs.appdynamics.com/appd/24.x/latest/en/extend-cisco-appdynamics/cisco-appdynamics-apis/analytics-events-api#id-.AnalyticsEventsAPIv24.3-create_schemaCreateEventSchema
+
+[source]
+----
+POST http://analytics.api.example.com/events/schema/<schemaName> HTTP/1.1
+X-Events-API-AccountName:<global_account_name>
+X-Events-API-Key:<api_key>
+Content-Type: application/vnd.appd.events+json;v=2
+Accept: application/vnd.appd.events+json;v=2
+{
+    "schema": {
+        "Shop": "String",
+        "Product": "String",
+        "Option": "String",
+        "Sales": "Integer"
+    }
+}
+----
+
+[IMPORTANT]
+====
+* The API user needs the permission to manage Custom Analytics Events Schemas.
+* The column names must match with the column names of the sql result, which will be executed. 
+====
+
+=== Configure Python environment
+
+[source, sh]
+----
+python<version> -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+----
+
+=== Configure application properties
+
+.Properties
+[%autowidth, cols="1m,1m,1"]
+|===
+|section |property |description
+
+|app
+|timerange_historial_data_in_min
+|During each start, the extension initially checks the Events API for missing historical data, requests them from the database and publishes the data to the Events API. 
+
+The value is the timerange in minutes, the extension will synchronize historical data.
+
+`default = 1440`
+
+|
+|filters
+a|This is a list of Name/Values pairs, which is used to identify the data, you want to send to AppDynamics Events API. 
+
+[source, json]
+----
+{
+    "Name":"Product", 
+    "Values": [
+        "Mobile1", 
+        "Mobile2"
+    ]
+}
+----
+
+The name must match with the placeholder in `database/query`. The extension replaces the Values with the placeholder during execution. 
+
+|appdynamics-api
+|url
+|Your Analytics URL. Check https://docs.appdynamics.com/paa/en/cisco-appdynamics-saas-domains-and-ip-ranges for saas instances. 
+
+|
+|account_name
+|AppDynamics Global Account Name. Check on your Controller / Licenses. 
+
+|
+|key
+a|Key of the API user.
+
+IMPORTANT: The API user needs the permission to query and publish events to the Custom Analytics Events Schemas, defined in `appdynamics-api.schema`
+
+|
+|schema
+a|Target Schema, to which the information will get published. 
+
+
+|database
+|url
+|Database to use. `localhost/free` during tests for example. 
+
+|
+|user
+|Database user. This user needs read permission to the table/view, defined in `database.query`.
+
+|
+|password
+|Database password
+
+|
+|query
+a|This query will get executed once a minute. The extension will send the result to the AppDynamics Analytics Events API. In this example, the collect all sales data for the different Shops/Products/Options for the last (completed) minute. 
+
+[IMPORTANT]
+====
+* The first column of the result must be a `Date`, which will be used as EventTimestamp in AppDynamics.
+* All other column names must match to the names used in the AppDynamics Events API Schema (`appdynamics-api.schema`).
+* The placeholders in the `WHERE` clause must match the `app.filter` names. 
+* Use `in` instead of `=`. Otherwise the filtering would only work, if you define only one value in `app.filter`.
+====
+
+
+|===
+
+.Create property file
+[source, sh]
+----
+cat <<EOT > config.ini
+[app]
+timerange_historial_data_in_min = 1440
+filters = [{"Name":"Shop", "Values": ["OnlineShop"]}, {"Name":"Product", "Values": ["Mobile1", "Mobile2"]}, {"Name":"Option", "Values": ["OptionA"]}]
+
+[appdynamics-api]
+url = https://<analytics-api-url>.saas.appdynamics.com
+account_name = <global_account_name>
+key = <api-key>
+schema = <analytics-events-schema>
+
+[database]
+dsn = <db-url>
+user = <db-user>
+pw = <db-password>
+query = 
+    SELECT
+        TRUNC (SALEDATE, 'mi') "EVENT_TIMESTAMP",
+        SHOP                   "SHOP",
+        PRODUCT                "PRODUCT",
+        PRODUCT_PACKAGE        "OPTION",
+        COUNT(*)               "SALES"
+    FROM
+        SALESDATA
+    WHERE
+        SHOP in ({Shop})
+        AND PRODUCT in ({Product})
+        AND PACKAGE_TYPE in ({Option})
+        AND SALEDATE BETWEEN TRUNC (SYSDATE, 'mi') - (:interval/1440) AND TRUNC (SYSDATE, 'mi') - INTERVAL '0.001' SECOND
+    GROUP BY SHOP, PRODUCT, PACKAGE_TYPE, EVENT_TIMESTAMP
+    ORDER BY EVENT_TIMESTAMP, PRODUCT
+EOT
+----
+
+
+
+
+.Run
+[source, sh]
+----
+.venv/bin/python advanced-db-custom-metrics.py
+----
