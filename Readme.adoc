@@ -3,7 +3,7 @@
 :url-repo: https://github.com/bfrevel/advanced-db-custom-metrics
 :toc:
 
-== Purpose
+== Use case
 
 Standart AppDynamics DB Custom Metrics have some typical metric limitations like:
 
@@ -15,9 +15,11 @@ Standart AppDynamics DB Custom Metrics have some typical metric limitations like
 This extension reads the data from the database every minute and sends the information to AppDynamics Analytics Event API. 
 
 
+== Installation
 
-== Setup
+Clone this repository to your environment.
 
+== Configuration
 
 === Create Event Schema in AppDynamics
 
@@ -121,14 +123,15 @@ a|Target Schema, to which the information will get published.
 
 |
 |query
-a|This query will get executed once a minute. The extension will send the result to the AppDynamics Analytics Events API. In this example, the collect all sales data for the different Shops/Products/Options for the last (completed) minute. 
+a|This query will get executed once a minute. The extension will send the result to the AppDynamics Analytics Events API. This example collects all sales data for the different Shops/Products/Options for the last (completed) minute. 
 
 [IMPORTANT]
 ====
 * The first column of the result must be a `Date`, which will be used as EventTimestamp in AppDynamics.
 * All other column names must match to the names used in the AppDynamics Events API Schema (`appdynamics-api.schema`).
-* The placeholders in the `WHERE` clause must match the `app.filter` names. 
+* The placeholders in the `WHERE` clause must match the `app.filter` Names. 
 * Use `in` instead of `=`. Otherwise the filtering would only work, if you define only one value in `app.filter`.
+* The `:interval` is required in the query to get the data for the last *interval* minutes. 
 ====
 
 
@@ -140,7 +143,7 @@ a|This query will get executed once a minute. The extension will send the result
 cat <<EOT > config.ini
 [app]
 timerange_historial_data_in_min = 1440
-filters = [{"Name":"Shop", "Values": ["OnlineShop"]}, {"Name":"Product", "Values": ["Mobile1", "Mobile2"]}, {"Name":"Option", "Values": ["OptionA"]}]
+filters = [{"Name":"Shop", "Values": ["OnlineShop"]}, {"Name":"Product", "Values": ["Product_1", "Product_2", "Product_3"]}, {"Name":"Option", "Values": ["Option_A"]}]
 
 [appdynamics-api]
 url = https://<analytics-api-url>.saas.appdynamics.com
@@ -171,6 +174,323 @@ query =
 EOT
 ----
 
+
+
+== Functionality
+
+=== Initial execution
+
+After starting the application, it will schedule a inital data load to transfer historical data to the AppDynamics Controller, if they're not available yet. 
+
+. For each combination of `app.filter`, the application will check the latest available data in AppDynamics Analytics.
+. The application executes the query `database.query`, but for the interval defined in `timerange_historial_data_in_min`, instead of the last minute. 
+. In the next step, the application filter for data, which is not already available in AppDynamics Analytics (comparing `event_timestamp`) and send send them to the AppDynamics Analytics Events API.
+
+NOTE: This precedure enables to you add additional filter values in the future. 
+
+.Example
+
+. The application will send the following query to the AppDynamics Analytics Events API, when using the example properties from above
++
+[source, sql]
+----
+SELECT Shop, Product, Option, max(eventTimestamp) FROM <analytics-events-schema> WHERE eventTimestamp >= <now - timerange_historial_data_in_min>
+----
++ 
+The result could be this. Product 1 and 2 are available. But with `eventTimestamp` from 2min ago. Product 3 is not available, as it just got added to the list. 
++
+[cols="1,1,1,1"]
+|===
+|SHOP |PRODUCT |OPTION |EVENT_TIMESTAMP
+
+|OnlineShop
+|Product_1
+|Option_A
+|2024-03-27 12:39:00
+
+|OnlineShop
+|Product_2
+|Option_A
+|2024-03-27 12:39:00
+|===
+
+. This is the database query which will get executed, when using the config example from above. 
++
+[source, sql]
+----
+SELECT
+    TRUNC (SALEDATE, 'mi') "EVENT_TIMESTAMP",
+    SHOP                   "SHOP",
+    PRODUCT                "PRODUCT",
+    PRODUCT_PACKAGE        "OPTION",
+    COUNT(*)               "SALES"
+FROM
+    SALESDATA
+WHERE
+    SHOP in ('OnlineShop')
+    AND PRODUCT in ('Product_1', 'Product_2', 'Product_3')
+    AND PACKAGE_TYPE in ('Option_A')
+    AND SALEDATE BETWEEN TRUNC (SYSDATE, 'mi') - (1440/1440) AND TRUNC (SYSDATE, 'mi') - INTERVAL '0.001' SECOND
+GROUP BY SHOP, PRODUCT, PACKAGE_TYPE, EVENT_TIMESTAMP
+ORDER BY EVENT_TIMESTAMP, PRODUCT
+----
++
+The result could look like this, when being executed at 2024-03-27 12:42:
++
+[cols="1,1,1,1,1"]
+|===
+|EVENT_TIMESTAMP |SHOP |PRODUCT |OPTION |SALES
+
+|2024-03-27 12:41:00
+|OnlineShop
+|Product_1
+|Option_A
+|3
+
+|2024-03-27 12:40:00
+|OnlineShop
+|Product_1
+|Option_A
+|5
+
+|2024-03-27 12:39:00
+|OnlineShop
+|Product_1
+|Option_A
+|5
+
+|2024-03-27 12:38:00
+|OnlineShop
+|Product_1
+|Option_A
+|2
+
+| < 2024-03-27 12:38:00
+|OnlineShop
+|Product_1
+|Option_A
+|...
+
+|2024-03-27 12:41:00
+|OnlineShop
+|Product_2
+|Option_A
+|13
+
+|2024-03-27 12:40:00
+|OnlineShop
+|Product_2
+|Option_A
+|15
+
+|2024-03-27 12:39:00
+|OnlineShop
+|Product_2
+|Option_A
+|29
+
+|2024-03-27 12:38:00
+|OnlineShop
+|Product_2
+|Option_A
+|15
+
+| < 2024-03-27 12:38:00
+|OnlineShop
+|Product_2
+|Option_A
+|...
+
+
+|2024-03-27 12:41:00
+|OnlineShop
+|Product_3
+|Option_A
+|2
+
+|2024-03-27 12:40:00
+|OnlineShop
+|Product_3
+|Option_A
+|1
+
+|2024-03-27 12:39:00
+|OnlineShop
+|Product_3
+|Option_A
+|4
+
+|2024-03-27 12:38:00
+|OnlineShop
+|Product_3
+|Option_A
+|0
+
+| < 2024-03-27 12:38:00
+|OnlineShop
+|Product_3
+|Option_A
+|...
+|===
+
+. Now all data will get filtered and sent to AppDynamics Analytics Events API
++
+[cols="1,1,1,1,1"]
+|===
+|EVENT_TIMESTAMP |SHOP |PRODUCT |OPTION |SALES
+
+|2024-03-27 12:41:00
+|OnlineShop
+|Product_1
+|Option_A
+|3
+
+|2024-03-27 12:40:00
+|OnlineShop
+|Product_1
+|Option_A
+|5
+
+|[.line-through]#2024-03-27 12:39:00#
+|[.line-through]#OnlineShop#
+|[.line-through]#Product_1#
+|[.line-through]#Option_A#
+|[.line-through]#5#
+
+|[.line-through]#2024-03-27 12:38:00#
+|[.line-through]#OnlineShop#
+|[.line-through]#Product_1#
+|[.line-through]#Option_A#
+|[.line-through]#2#
+
+|[.line-through]# < 2024-03-27 12:38:00#
+|[.line-through]#OnlineShop#
+|[.line-through]#Product_1#
+|[.line-through]#Option_A#
+|[.line-through]#...#
+
+|2024-03-27 12:41:00
+|OnlineShop
+|Product_2
+|Option_A
+|13
+
+|2024-03-27 12:40:00
+|OnlineShop
+|Product_2
+|Option_A
+|15
+
+|[.line-through]#2024-03-27 12:39:00#
+|[.line-through]#OnlineShop#
+|[.line-through]#Product_2#
+|[.line-through]#Option_A#
+|[.line-through]#29#
+
+|[.line-through]#2024-03-27 12:38:00#
+|[.line-through]#OnlineShop#
+|[.line-through]#Product_2#
+|[.line-through]#Option_A#
+|[.line-through]#15#
+
+|[.line-through]#< 2024-03-27 12:38:00#
+|[.line-through]#OnlineShop#
+|[.line-through]#Product_2#
+|[.line-through]#Option_A#
+|[.line-through]#...#
+
+
+|2024-03-27 12:41:00
+|OnlineShop
+|Product_3
+|Option_A
+|2
+
+|2024-03-27 12:40:00
+|OnlineShop
+|Product_3
+|Option_A
+|1
+
+|2024-03-27 12:39:00
+|OnlineShop
+|Product_3
+|Option_A
+|4
+
+|2024-03-27 12:38:00
+|OnlineShop
+|Product_3
+|Option_A
+|0
+
+| < 2024-03-27 12:38:00
+|OnlineShop
+|Product_3
+|Option_A
+|...
+|===
++
+NOTE: All data, older than `2024-03-27 12:39:00` for Products 1 and 2 have been removed. Product 3 was just added, so all data sets will be sent to AppDynamics Analytics Events API.
+
+
+=== Continuous execution
+
+Once the initial import is completed after startup, the application will schedule a job to synchronize data from the database to AppDynamics Analytics. This job will be scheduled to execute once every minute.
+
+. The application executes the query `database.query` for the last minute.
+. The result will be sent to AppDynamics Analytics Events API.
+
+
+.Example
+
+. This is the database query which will get executed, when using the config example from above.
++ 
+[source, sql]
+----
+SELECT
+    TRUNC (SALEDATE, 'mi') "EVENT_TIMESTAMP",
+    SHOP                   "SHOP",
+    PRODUCT                "PRODUCT",
+    PRODUCT_PACKAGE        "OPTION",
+    COUNT(*)               "SALES"
+FROM
+    SALESDATA
+WHERE
+    SHOP in ('OnlineShop')
+    AND PRODUCT in ('Product_1', 'Product_2', 'Product_3')
+    AND PACKAGE_TYPE in ('Option_A')
+    AND SALEDATE BETWEEN TRUNC (SYSDATE, 'mi') - (1/1440) AND TRUNC (SYSDATE, 'mi') - INTERVAL '0.001' SECOND
+GROUP BY SHOP, PRODUCT, PACKAGE_TYPE, EVENT_TIMESTAMP
+ORDER BY EVENT_TIMESTAMP, PRODUCT
+----
+
+. The result could look like this, when being executed at 2024-03-27 12:43:
++
+[cols="1,1,1,1,1"]
+|===
+|EVENT_TIMESTAMP |SHOP |PRODUCT |OPTION |SALES
+
+|2024-03-27 12:42:00
+|OnlineShop
+|Product_1
+|Option_A
+|4
+
+|2024-03-27 12:42:00
+|OnlineShop
+|Mobile_2
+|Option_A
+|12
+
+|2024-03-27 12:42:00
+|OnlineShop
+|Mobile_3
+|Option_A
+|1
+|===
++
+This result will get sent to the AppDynamics Analytics Events API, by using the same column names. 
 
 
 == Execute the extension
