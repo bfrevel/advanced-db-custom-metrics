@@ -351,24 +351,6 @@ The result could look like this, when being executed at 2024-03-27 12:42:
 |Option_A
 |5
 
-|[.line-through]#2024-03-27 12:39:00#
-|[.line-through]#OnlineShop#
-|[.line-through]#Product_1#
-|[.line-through]#Option_A#
-|[.line-through]#5#
-
-|[.line-through]#2024-03-27 12:38:00#
-|[.line-through]#OnlineShop#
-|[.line-through]#Product_1#
-|[.line-through]#Option_A#
-|[.line-through]#2#
-
-|[.line-through]# < 2024-03-27 12:38:00#
-|[.line-through]#OnlineShop#
-|[.line-through]#Product_1#
-|[.line-through]#Option_A#
-|[.line-through]#...#
-
 |2024-03-27 12:41:00
 |OnlineShop
 |Product_2
@@ -380,25 +362,6 @@ The result could look like this, when being executed at 2024-03-27 12:42:
 |Product_2
 |Option_A
 |15
-
-|[.line-through]#2024-03-27 12:39:00#
-|[.line-through]#OnlineShop#
-|[.line-through]#Product_2#
-|[.line-through]#Option_A#
-|[.line-through]#29#
-
-|[.line-through]#2024-03-27 12:38:00#
-|[.line-through]#OnlineShop#
-|[.line-through]#Product_2#
-|[.line-through]#Option_A#
-|[.line-through]#15#
-
-|[.line-through]#< 2024-03-27 12:38:00#
-|[.line-through]#OnlineShop#
-|[.line-through]#Product_2#
-|[.line-through]#Option_A#
-|[.line-through]#...#
-
 
 |2024-03-27 12:41:00
 |OnlineShop
