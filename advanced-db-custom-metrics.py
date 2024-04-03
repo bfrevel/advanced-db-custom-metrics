@@ -31,9 +31,12 @@ appd_config = {
     "schema": config["appdynamics-api"]["schema"],
 }
 db_config = {
-    "dsn": config["database"]["dsn"],
+    "dsn": config["database"]["dsn"] if "dsn" in config["database"] else None,
     "user": config["database"]["user"],
     "pw": config["database"]["pw"],
+    "host" : config["database"]["host"] if "host" in config["database"] else None,
+    "host" : config["database"]["port"] if "port" in config["database"] else None,
+    "host" : config["database"]["sid"] if "sid" in config["database"] else None,
     "query": config["database"]["query"],
 }
 
@@ -89,46 +92,52 @@ def find_existing_data():
 
 
 def get_data_from_db(interval: int = 1, existing_data = []):
-    with oracledb.connect(
-        dsn=db_config["dsn"], user=db_config["user"], password=db_config["pw"]
-    ) as connection:
-        with connection.cursor() as cursor:
 
-            logging.info(f"Reading data from database")
+    if db_config["dsn"] is not None:     
+        with oracledb.connect(
+            dsn=db_config["dsn"], user=db_config["user"], password=db_config["pw"]
+        ) as connection:
+            return get_data_from_db_with_conn(interval, existing_data, connection)
+    else:
+        with oracledb.connect(
+            host=db_config["host"], port=db_config["port"], sid=db_config["sid"], user=db_config["user"], password=db_config["pw"]
+        ) as connection:
+            return get_data_from_db_with_conn(interval, existing_data, connection)
 
-            sql = db_config["query"]
-            sql_params = {"interval": interval}
-            if app_config["filters"] is not None:
+def get_data_from_db_with_conn(interval, existing_data, connection):
+    with connection.cursor() as cursor:
+        logging.info(f"Reading data from database")
 
-                format_map = {}
-                for filter in app_config["filters"]:
-                    placeholder = f':{filter["Name"]}_{{}}'
-                    format_map[filter["Name"]] = ", ".join(
+        sql = db_config["query"]
+        sql_params = {"interval": interval}
+        if app_config["filters"] is not None:
+            format_map = {}
+            for filter in app_config["filters"]:
+                placeholder = f':{filter["Name"]}_{{}}'
+                format_map[filter["Name"]] = ", ".join(
                         [placeholder.format(i) for i in range(len(filter["Values"]))]
                     )
 
-                    for i in range(len(filter["Values"])):
-                        sql_params[f'{filter["Name"]}_{i}'] = filter["Values"][i]
+                for i in range(len(filter["Values"])):
+                    sql_params[f'{filter["Name"]}_{i}'] = filter["Values"][i]
 
-                sql = sql.format_map(format_map)
+            sql = sql.format_map(format_map)
 
-            data = []
-            rows = cursor.execute(sql, sql_params)
-            columns = cursor.description
-            for row in rows:
+        data = []
+        rows = cursor.execute(sql, sql_params)
+        columns = cursor.description
+        for row in rows:
+            last_available_data = find_row_in_existing_data(row, existing_data)
 
-                last_available_data = find_row_in_existing_data(row, existing_data)
+            if last_available_data is None or row[0] > datetime.fromtimestamp((last_available_data / 1000)):
+                data_row = {"eventTimestamp": row[0].strftime("%Y-%m-%dT%H:%M:%SZ")}
+                for i in range(1, len(row)):
+                    data_row[columns[i][0].title()] = row[i]
+                data.append(data_row)
 
-                if last_available_data is None or row[0] > datetime.fromtimestamp((last_available_data / 1000)):
-
-                    data_row = {"eventTimestamp": row[0].strftime("%Y-%m-%dT%H:%M:%SZ")}
-                    for i in range(1, len(row)):
-                        data_row[columns[i][0].title()] = row[i]
-                    data.append(data_row)
-
-            logging.debug(f"DB response: {data}")
-            logging.info(f"Received {len(data)} rows from database")
-            return data
+        logging.debug(f"DB response: {data}")
+        logging.info(f"Received {len(data)} rows from database")
+        return data
 
 
 def find_row_in_existing_data(row, existing_data): 
